@@ -1,0 +1,52 @@
+###################################
+	Changelog for Pro-Edge
+		by jwgscott
+	github.com/jwgscott/pro-edge
+###################################
+
+===================================
+  Build 20260722.4
+===================================
+General:
+- MAJOR: Combined the different Modes (AUTO, AUTO_SMOOTH, AUTO_RELEASE) into one single AUTO mode. Mode switching/configuration now happens via streamlined settings, allowing to switch between either abrupt/smooth edging and denial/release ending.
+- Added configurable post edge break time before the vibrator resumes with ramping up.
+- Added a post orgasm break functionality (configurable break time or return to MANUAL, ending the session after climax.
+- Modified the post edge forced relaxation (before further edges are counted) to implement a duration for which the user has to relax/unclench contiuously, preventing continuous clenching to count towards successful edges or erroneously trigger the anti-cheat penalty.
+- Added a physical and visual representation of the vibrator ramp speed in the ramp speed configuration menu
+- Added a function to save the current state/mode when going to settings, allowing a smooth return to the previous mode
+- Modified the visual scheme of the LED ring for the various modes and menus (color differences should be more clear and follow a distinct scheme).
+
+RELEASE Mode
+- Added light anti-cheat rearm logic for counting edges.
+- Anti-cheat penalty mode, random forced cooldown with penalty reset for early triggering and visual reminder
+
+
+
+===================================
+  Build 20260721.3
+===================================
+- Implemented state saving, preventing loss of progress and settings upon using the settings menu
+- Various small changes and fixes
+
+
+
+===================================
+  Build 20260721.2
+===================================
+- Various small changes and fixes
+
+
+
+===================================
+  Build 20260721.5
+===================================
+
+- MAJOR: Complete code rework and clean-up
+- Fixed the sensitivity reset bug in state navigation (unwanted reset after switching over the AUTO mode)
+- Cleaned redundant EEPROM reads on startup
+- Fixed small inconsistencies in the loop() function
+- Prevent possible int overflow of EEPROM on sensitivity setting (saving encoder state >255)
+- Replaced the map() calls for vibrator speed with manual float interpolation for keeping float precision.
+- Minor fix in the speed cursor calculation
+- Changed ramp speed setting from 5-120s to 1-24s possible ramp speed (keep it realistic)
+- Preventing the vibrator from erroneously activating after leaving standby

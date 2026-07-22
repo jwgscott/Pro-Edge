@@ -4,32 +4,42 @@ Hardware and software for automatic edge/orgasm detection on Arduino. Built upon
 Protogasm hasn't been updated for a few years now, yet it remains a solid base to build upon with easy-to-use hardware and software.
 The hardware remains largely unchanged, providing a ready-to-print, easy-to-solder PCB designed to be easily mounted on an Arduino UNO R3. (At least that's the hardware I tested it with—it probably works with the R4 etc. as well, though untested and without guarantees).
 
+The new Pro-Edge software should™ be install and go on any Arduino UNO R3 based Protogasm hardware.
+
 ## Features
 Pro-Edge takes all the features from Protogasm and extends them (while fixing a few bugs...).
 
 * The previously announced (but never added) Protogasm feature of configurable vibrator ramp-up speed has been implemented.
-* Two additional automatic modes have been added, including various configurable settings/customization options.
+* The Automatic Edging mode has been majorly reworked. It now features configurable smooth or abrupt drop mode and a denial or release mode.
+* Release mode allows the user to have a (pre-defined) orgasm after a set number of edges are reached. It features a progress bar.
+* When in release mode, the device runs an anti-cheat logic, preventing the user from accumulating edges without really putting in the work. (Not completely impossible to circumvent but pretty effective).
+* There is a Variance setting to add some randomness to the set target edges, requiring more or less than the set amount while lying to the user with the progress bar.
 
-### Smooth automatic edging mode (Depletion)
-Building upon the automatic edging mode from Protogasm (now called 'Abrupt automatic edging mode'), this mode works largely the same, but with a critical difference: it reduces the vibrator speed dynamically, depending on user arousal/clenching strength. After the arousal reading decreases for a moment, the vibration gets more intense again. Rinse and repeat. When the user clenches quite hard (hitting the set edge detection, depending on the configured sensitivity), the device switches off the vibrator completely—just as in Protogasm's 'Abrupt edging mode'—but only for a few seconds before starting the configured ramp-up.
+### The Automatic Edging mode
+Building upon the automatic edging mode from Protogasm, this mode now features a lot of possible customization.
 
+#### Abrupt edging mode
+Abrupt edging mode increases vibrator strength to a set maximum and keeps it there until the user reaches the set limit. It then cuts off the vibration abruptly for a defined break before starting to ramp up again. This is the basic mode featured in the original Protogasm.
+
+#### Smooth edging mode
+Smooth edging mode works slightly differently from Abrupt edging mode: it reduces the vibrator speed dynamically, depending on user arousal/clenching strength. After the arousal reading decreases for a moment, the vibration gets more intense again. Rinse and repeat.
+When the user clenches quite hard (hitting the set edge detection, depending on the configured sensitivity), the device switches off the vibrator completely—just as in Abrupt edging mode—before starting the configured ramp-up again after some time.
 It's quite devious and much better at keeping the user close to the edge for extended periods by giving just enough stimulation to feel tantalizingly intense. It is also easier to calibrate for extremely close edges with a near impossibility of orgasm.
-Like the Abrupt edging mode, this is a denial-only mode, unless you manually modify detection sensitivity to allow for an orgasm.
 
-### Automatic release mode
-This mode expands upon the 'Smooth automatic edging mode' with additional features.
-It has mode-specific settings (accessible by switching to this mode (magenta) and then holding the button for one second).
+#### Denial mode
+In Denial mode, the cycle just continues without end, edging the user over and over without ever granting release, either using abrupt or smooth edging mode.
 
-In this mode, the device edges the user using the smooth mode, reducing vibrator speed as the edge approaches. Additionally, it allows an eventual release—but only after a user-configured number of edges (2–48, in increments of 2). Furthermore, this release can come with a twist: the release duration (the time the vibrator operates at the user-configured maximum setting) is also configurable. This allows for a ruined orgasm with a very short release duration, a full orgasm, or prolonged overstimulation (POT) with a longer duration (2–48 seconds, in increments of 2 seconds).
+#### Release mode
+In Release mode, the user is edged over and over, just like in Denial mode, but accumulates reached edges. After a predefined number of edges are reached, the vibrator stays on (for a predefined time) after registering an edge, granting the user a release. Progress is visualized via an indicator using the built-in LEDs.
+There is a Variance setting to add some randomness to the set target edges, requiring more or less than the set amount while possibly lying to the user with the progress bar as it only shows the user defined target edges without the random variance.
+Furthermore, this release can come with a twist: the release duration (the time the vibrator operates at the user-configured maximum setting) is also configurable. This allows for a ruined orgasm with a very short release duration, a full orgasm, or prolonged overstimulation (POT) with a longer duration.
+When in release mode, the device runs an anti-cheat logic, preventing the user from accumulating edges without really putting in the work. (Not completely impossible to circumvent but pretty effective).
 
-Progress is visualized via an indicator using the built-in LEDs.
-For an added surprise, a variance or random factor can be set, adding or subtracting required edges while leaving the user in the dark.
-
-(See the manual for detailed descriptions)
 
 ### Bugfixes (some)
 * Fixed timer clock speed issue: The issue where the vibrator only operated at full speed when set to the maximum speed setting has been fixed.
 * Fixed standby behavior: Resolved an issue where the device failed to properly enter standby mode or restarted upon a very long button press.
+* Some more unmentioned ones by now. See changelogs for details.
 
 
 ## License

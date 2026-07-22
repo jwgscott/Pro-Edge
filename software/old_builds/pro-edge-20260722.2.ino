@@ -1,9 +1,9 @@
-// Pro-Edge build 20260722.4
+// Pro-Edge (a Protogasm fork) build 20260722.2
+// (build backup before state saving was implemented)
 /**
  * =======================================================================================
  * PRO-EDGE VIBRATOR CONTROLLER & EDGING SYSTEM
  * =======================================================================================
- * A fork of the Protogasm design by night-howler. (github.com/night-howler/protogasm)
  * Drives a vibrator and utilizes real-time changes in the internal pressure of an 
  * inflatable plug to estimate a user's closeness to climax, automatically throttling 
  * or cutting power to manage edging sessions or facilitate controlled orgasms.
@@ -18,18 +18,20 @@
  *  - Very Long Press (>2.5s): Suspends device operation (Standby/Off).
  * 
  * MAIN OPERATING MODES:
- * [Red]    Manual Mode: Direct, analog control over the vibrator speed.
- * [Blue    Auto Mode: Automatic Edging mode. Motor ramps up over a defined time. 
- * /Pink]   If the pressure limit is reached,  power cuts abruptly to 0 for a cool-down period.
- *          Blue is Denial mode, running in a continuous cycle to edge the user without release. 
- *          Pink is Release mode, allowing an orgasm after a set number of edges and depending on settings.
+ * [Red]     Manual Mode: Direct, analog control over the vibrator speed.
+ * [Blue]    Auto Abrupt: Edging mode. Motor ramps up over a defined time. If the pressure 
+ *           limit is breached, power cuts abruptly to 0 for a cool-down period.
+ * [Cyan]    Auto Smooth: Proportional edging mode. As pressure nears the limit, the motor 
+ *           smoothly and proportionally throttles down to keep the user "riding the edge".
+ * [Magenta] Auto-Release: Target-oriented edging mode. Counts valid edges (crossing the 
+ *           pressure limit) using a 15-second hardware debounce timer. Features a deceptive 
+ *           LED visualizer (Pink cursor moving toward a Gold target) and a hidden "Roulette" 
+ *           variance to randomize the required edges per cycle. Once the hidden target is 
+ *           met, triggers a maximum-speed release phase.
  * 
  * CONFIGURATION MENUS (Accessed via Long Press):
  * [Green]   Max Speed: Sets the ceiling speed for all automatic ramping modes.
  * [Orange]  Ramp Speed: Sets how long (5-120s) the motor takes to reach Max Speed.
- * [Orange/Blue binary] Orange = Abrupt Edging mode, Blue = Smooth Edging mode.
- * [WhiteGrey/Pink binary] WhiteGrey = Denial mode, Pink = Release mode.
- * Magenta, Cyan and Yellow menu only available when Release mode is active.
  * [Magenta] Target Edges: Sets the baseline edge requirement for Auto-Release mode (2-48).
  * [Cyan]    Edge Variance: Sets the +/- roulette variance (0-6) applied to the target edges.
  * [Yellow]  Release Duration: Sets the duration (2-48s) of the final climax vibration.
@@ -98,13 +100,11 @@ RunningAverage raPressure(RA_FREQUENCY* RA_HIST_SECONDS);
 #define OPT_RAMPSPD 4
 #define OPT_BEEP 5
 #define OPT_PRES 6
-#define OPT_DROP_STYLE 7
-#define OPT_SESSION_GOAL 8
+#define AUTO_SMOOTH 7
+#define AUTO_RELEASE 8
 #define OPT_EDGES 9
 #define OPT_RELDUR 10
 #define OPT_VARIANCE 11
-#define OPT_BREAK_TIME 12
-#define OPT_POST_ORG_BREAK 13
 
 // Button states
 #define BTN_NONE 0
@@ -122,28 +122,20 @@ RunningAverage raPressure(RA_FREQUENCY* RA_HIST_SECONDS);
 #define RELEASE_DUR_ADDR 5
 #define RAMPSPEED_ADDR 6
 #define VARIANCE_ADDR 7
-#define DROP_STYLE_ADDR 8
-#define SESSION_GOAL_ADDR 9
-#define BREAK_TIME_ADDR 10
-#define POST_ORG_BREAK_ADDR 11
 
 // ======= Global State & Settings ===============================
 
 CRGB leds[NUM_LEDS];
 uint8_t currentState = MANUAL;
-uint8_t previousMode = MANUAL;  // Memory tracker for menu returns
-bool isSmoothMode = false;      // false = Abrupt, true = Smooth
-bool isReleaseMode = false;     // false = Denial, true = Release
 
 // Pressure & Speed State
 int pressure = 0;
-int avgPressure = 0;      // Running 25-second average to establish resting baseline
-int pLimit = 600;         // Dynamic pressure delta limit before vibrator cuts off
-int sensitivity = 0;      // Orgasm detection sensitivity (pulse count, persists across states)
-int maxSpeed = 255;       // Max automatic ramp-up speed limit
-float motSpeed = 0;       // Current motor speed (uses float for smooth  ramping)
-int rampTimeS = 30;       // Ramp-up time in seconds
-int edgeBreakTimeS = 10;  // Default 10 seconds of dead motor time after an edge
+int avgPressure = 0;  // Running 25-second average to establish resting baseline
+int pLimit = 600;     // Dynamic pressure delta limit before vibrator cuts off
+int sensitivity = 0;  // Orgasm detection sensitivity (pulse count, persists across states)
+int maxSpeed = 255;   // Max automatic ramp-up speed limit
+float motSpeed = 0;   // Current motor speed (uses float for smooth  ramping)
+int rampTimeS = 30;   // Ramp-up time in seconds
 
 // Auto-Release State Variables
 int targetEdges = 4;        // Baseline configured number of edges required
@@ -156,9 +148,6 @@ unsigned long releaseStartTime = 0;
 unsigned long lastEdgeTime = 0;             // Timestamp tracker for the 15-second debounce window
 bool wasOverLimit = false;                  // Clench debouncer (prevents single clench from counting rapidly)
 unsigned long currentCooldownMS = 15000UL;  // Dynamic cooldown tracker
-int postOrgasmBreak = 0;                    // Stores the raw encoder position (0-23) for the break menu
-bool isPostOrgasmBreak = false;             // Locks the state machine into the post-orgasm rest phase
-unsigned long postOrgasmBreakStartTime = 0;
 
 // ======= Functions ===============================
 
@@ -208,8 +197,9 @@ void setup() {
   FastLED.setBrightness(BRIGHTNESS);
 
   // LOAD SETTINGS FROM EEPROM (With fallback defaults if memory is blank/255)
-
-  sensitivity = EEPROM.read(SENSITIVITY_ADDR) * 4;  // Sensitivity is stored divided by 4 to fit within the 8-bit (max 255) EEPROM limit, as the maximum possible encoder pulse value is 284. It is multiplied back upon reading.
+  // Note: Sensitivity is stored divided by 4 to fit within the 8-bit (max 255) EEPROM limit,
+  // as the maximum possible encoder pulse value is 284. It is multiplied back upon reading.
+  sensitivity = EEPROM.read(SENSITIVITY_ADDR) * 4;
   maxSpeed = min((int)EEPROM.read(MAX_SPEED_ADDR), MOT_MAX);
 
   targetEdges = EEPROM.read(TARGET_EDGES_ADDR);
@@ -222,17 +212,8 @@ void setup() {
   rampTimeS = EEPROM.read(RAMPSPEED_ADDR);
   if (rampTimeS < 1 || rampTimeS > 24) rampTimeS = 10;
 
-  edgeBreakTimeS = EEPROM.read(BREAK_TIME_ADDR);
-  if (edgeBreakTimeS < 1 || edgeBreakTimeS > 24) edgeBreakTimeS = 10;  // Fallback mapping to 10s
-
-  postOrgasmBreak = EEPROM.read(POST_ORG_BREAK_ADDR);
-  if (postOrgasmBreak == 255 || postOrgasmBreak > 23) postOrgasmBreak = 0;  // Default to 0 (no break)
-
   edgeVariance = EEPROM.read(VARIANCE_ADDR);
   if (edgeVariance == 255) edgeVariance = 0;
-
-  isSmoothMode = EEPROM.read(DROP_STYLE_ADDR) == 1;
-  isReleaseMode = EEPROM.read(SESSION_GOAL_ADDR) == 1;
 
   randomSeed(analogRead(A1));               // Seed random generator using background noise from unconnected pin
   currentCooldownMS = random(8000, 20001);  // Roll the initial randomized edge cooldown (auto_release) between 10-20 seconds
@@ -306,299 +287,199 @@ void run_manual() {
 }
 
 /**
- * @brief Auto Mode. Dynamically combines the logic for Abrupt and Smooth Edging, as well as Denial, 
- * and Release mode based on the global user-configured booleans (isSmoothMode & isReleaseMode).
- */
-/**
- * @brief Auto Mode. Dynamically combines the logic for Abrupt and Smooth Edging, as well as Denial, 
- * and Release mode based on the global user-configured booleans (isSmoothMode & isReleaseMode).
+ * @brief [AMBER] Abrupt Auto Mode. Linear ramp-up with instant shutoff upon limit breach.
  */
 void run_auto() {
-  // --- INITIALIZATION & SENSOR SCALING ---
+  static float motIncrement = 0.0;
+  // Calculate exact float increment required to reach maxSpeed over rampTimeS at 60Hz
+  motIncrement = ((float)maxSpeed / ((float)FREQUENCY * (float)rampTimeS));
+
+  int knob = encLimitRead(0, (3 * NUM_LEDS) - 1);
+  sensitivity = knob * 4;
+  pLimit = map(knob, 0, 3 * (NUM_LEDS - 1), 600, 1);
+
+  if (pressure - avgPressure > pLimit) {
+    // Cutoff: Apply a negative mathematical delay equal to half the ramp up time
+    motSpeed = -0.5 * (float)rampTimeS * ((float)FREQUENCY * motIncrement);
+  } else if (motSpeed < (float)maxSpeed) {
+    motSpeed += motIncrement;
+  }
+
+  // Ternary operator prevents motor stall by enforcing MOT_MIN while active
+  analogWrite(MOTPIN, motSpeed > MOT_MIN ? (int)motSpeed : 0);
+
+  int presDraw = map(constrain(pressure - avgPressure, 0, pLimit), 0, pLimit, 0, NUM_LEDS * 3);
+  draw_bars_3(presDraw, CRGB::DarkGreen, CRGB::DarkOrange, CRGB::Red);
+  draw_cursor_3(knob, CRGB::OrangeRed, CRGB::DarkOrange, CRGB::Yellow);
+}
+
+/**
+ * @brief [ICY BLUE] Smooth Auto Mode. Speed proportionally throttles down as pressure approaches the limit.
+ */
+void run_auto_smooth() {
   static float motIncrement = 0.0;
   motIncrement = ((float)maxSpeed / ((float)FREQUENCY * (float)rampTimeS));
 
   int knob = encLimitRead(0, (3 * NUM_LEDS) - 1);
   sensitivity = knob * 4;
   pLimit = map(knob, 0, 3 * (NUM_LEDS - 1), 600, 1);
+
   int delta = pressure - avgPressure;
 
-  // --- CALCULATE BREAK TIMEOUT STATUS ---
-  unsigned long breakDurationMS = (unsigned long)edgeBreakTimeS * 1000UL;
-  bool isServingBreak = (millis() - lastEdgeTime < breakDurationMS);
+  if (delta > pLimit) {
+    motSpeed = 0;  // Total breach: drop speed immediately
+  } else if (delta > 0) {
+    // Proportional Deceleration Logic
+    // Calculates how close (in %) the pressure is to the absolute limit
+    float throttle = (float)delta / (float)pLimit;
+    float targetSpeed = maxSpeed * (1.0 - throttle);
 
-  // --- RELAX DEBOUNCE TIMER ---
-  static unsigned long relaxStartTime = 0;
-  static bool isRelaxing = false;
-
-  // Track if the user has maintained pressure below 25% continuously for a bit before allowing edges to be counted again (allow the edge to subside)
-  if (isReleaseMode) {
-    if (delta < (pLimit / 4)) {
-      if (!isRelaxing) {
-        isRelaxing = true;
-        relaxStartTime = millis();  // Start the 2-second timer
-      } else if (millis() - relaxStartTime >= 2000UL) {
-        wasOverLimit = false;  // Unlock the edge detector after 2 continuous seconds
-      }
-    } else {
-      isRelaxing = false;  // Reset the timer immediately if pressure spikes above 25%
+    if (motSpeed > targetSpeed) {
+      // Actively brake/reduce speed 15x faster than ramp-up if currently over the proportional target
+      motSpeed -= (motIncrement * 15);
+      if (motSpeed < targetSpeed) motSpeed = targetSpeed;
+    } else if (motSpeed < targetSpeed && motSpeed < maxSpeed) {
+      motSpeed += motIncrement;
     }
+  } else {
+    // No significant pressure: continue normal ramp up
+    if (motSpeed < (float)maxSpeed) motSpeed += motIncrement;
   }
 
-  // --- 1. ACTIVE RELEASE PHASE LOGIC ---
-  if (isReleaseMode && isReleasing) {
-    analogWrite(MOTPIN, maxSpeed);
+  analogWrite(MOTPIN, motSpeed > MOT_MIN ? (int)motSpeed : 0);
 
+  int presDraw = map(constrain(delta, 0, pLimit), 0, pLimit, 0, NUM_LEDS * 3);
+  draw_bars_3(presDraw, CRGB::DarkGreen, CRGB::DarkOrange, CRGB::Red);
+  draw_cursor_3(knob, CRGB::Aquamarine, CRGB::Cyan, CRGB::Blue);
+}
+
+/**
+ * @brief [MAGENTA] Auto-Release Mode. Counts valid proportional edges and executes a timed climax phase.
+ */
+void run_auto_release() {
+  static float motIncrement = 0.0;
+  motIncrement = ((float)maxSpeed / ((float)FREQUENCY * (float)rampTimeS));
+
+  int knob = encLimitRead(0, (3 * NUM_LEDS) - 1);
+  sensitivity = knob * 4;
+  pLimit = map(knob, 0, 3 * (NUM_LEDS - 1), 600, 1);
+
+  // 1. ACTIVE RELEASE PHASE LOGIC
+  if (isReleasing) {
+    analogWrite(MOTPIN, maxSpeed);  // Force absolute max speed
+
+    // Conclude release phase if duration timer has expired (resumes the edging session, next release after set target edges)
     if (millis() - releaseStartTime > ((unsigned long)releaseDurationS * 1000UL)) {
-      // The orgasm phase has concluded
       isReleasing = false;
-      motSpeed = 0;
-      analogWrite(MOTPIN, 0);
-
-      // Determine the next state based on the Post-Orgasm setting
-      if (postOrgasmBreak >= NUM_LEDS - 4) {
-        // Infinite Break: Force the device into Manual Mode
-        currentState = MANUAL;
-        previousMode = MANUAL;
-        myEnc.write(0);
-        currentEdges = 0;
-        return;
-      } else if (postOrgasmBreak > 0) {
-        // Standard Break: Trigger the timeout lock
-        isPostOrgasmBreak = true;
-        postOrgasmBreakStartTime = millis();
-      } else {
-        // No Break: Resume edging immediately
-        currentEdges = 0;
-      }
-    } else {
-      // Actively Climaxing: Strobe visuals and hold motor
-      fill_solid(leds, NUM_LEDS, CRGB::White);
-      fadeToBlackBy(leds, NUM_LEDS, (millis() % 100 > 50) ? 100 : 0);
-      return;
-    }
-  }
-
-  // --- 1.5. POST-ORGASM BREAK LOGIC ---
-  if (isReleaseMode && isPostOrgasmBreak) {
-    // Calculate total break duration (3 seconds per knob position)
-    unsigned long breakDurationMS = (unsigned long)postOrgasmBreak * 3000UL;
-
-    if (millis() - postOrgasmBreakStartTime > breakDurationMS) {
-      // Break has concluded, resume normal edging
-      isPostOrgasmBreak = false;
       currentEdges = 0;
-      wasOverLimit = false;
-    } else {
-      // Still resting: Hold motor at 0
       motSpeed = 0;
-      analogWrite(MOTPIN, 0);
-
-      // Visualizer: Slowly pulsing dim purple to signify the resting state
-      uint8_t throb = beatsin8(15, 20, 100);
-      fill_solid(leds, NUM_LEDS, CRGB(32, 0, 128));
-      fadeToBlackBy(leds, NUM_LEDS, 255 - throb);
-
-      return;  // Bypass all standard edging logic below
     }
+
+    // Strobe LEDs white to indicate release phase
+    fill_solid(leds, NUM_LEDS, CRGB::White);
+    fadeToBlackBy(leds, NUM_LEDS, (millis() % 100 > 50) ? 100 : 0);
+    return;  // Bypass the rest of the edge logic
   }
 
-  // --- 2. LIMIT BREACH & EDGE COUNTING LOGIC ---
+  // 2. SMOOTH EDGE COUNTING & DEBOUNCE LOGIC
+  int delta = pressure - avgPressure;
+
   if (delta > pLimit) {
     if (!wasOverLimit) {
       wasOverLimit = true;
 
-      if (isReleaseMode) {
-        // Time-Gate Check: Evaluate against the randomized COOLDOWN, not the physical break time.
-        if (millis() - lastEdgeTime > currentCooldownMS || currentEdges == 0) {
+      // Check against the newly randomized dynamic cooldown
+      if (millis() - lastEdgeTime > currentCooldownMS || currentEdges == 0) {
 
-          currentEdges++;
-          lastEdgeTime = millis();
-          currentCooldownMS = random(8000, 20001);
+        // --- VALID EDGE ACHIEVED ---
+        currentEdges++;
+        lastEdgeTime = millis();
 
-          if (currentEdges >= actualTargetEdges) {
-            isReleasing = true;
-            releaseStartTime = millis();
-            actualTargetEdges = targetEdges + random(-edgeVariance, edgeVariance + 1);
-            if (actualTargetEdges < 1) actualTargetEdges = 1;
-            return;
-          }
-        } else {
-          // Anti-Cheat Penalty: Breached before the randomized cooldown expired.
-          lastEdgeTime = millis();
-          currentCooldownMS = random(8000, 20001);
-          motSpeed = 0;
-          analogWrite(MOTPIN, 0);
+        // Roll a new random cooldown for the next edge (8 to 20 seconds)
+        currentCooldownMS = random(8000, 20001);
 
-          // Blocking Visual Timeout: 3 Red Flashes
-          for (int b = 0; b < 3; b++) {
-            fill_solid(leds, NUM_LEDS, CRGB::Black);
-            for (int i = 0; i < 3; i++) {
-              leds[i] = CRGB::Red;
-              leds[i + 12] = CRGB::Red;
-            }
-            FastLED.show();
-            delay(150);
-            fill_solid(leds, NUM_LEDS, CRGB::Black);
-            FastLED.show();
-            delay(150);
-          }
+        if (currentEdges >= actualTargetEdges) {
+          isReleasing = true;
+          releaseStartTime = millis();
+
+          actualTargetEdges = targetEdges + random(-edgeVariance, edgeVariance + 1);
+          if (actualTargetEdges < 1) actualTargetEdges = 1;
+          return;
         }
       } else {
-        // Denial Mode: Register the breach to trigger the physical Break Time
+        // --- STRICT PENALTY LOGIC & ANIMATION ---
         lastEdgeTime = millis();
+
+        // Re-roll the cooldown to keep the user guessing after a failure
+        currentCooldownMS = random(8000, 20001);
+
+        // Force motor off instantly
+        motSpeed = 0;
+        analogWrite(MOTPIN, 0);
+
+        // Execute Blocking Penalty Animation (~900ms visual timeout)
+        for (int b = 0; b < 3; b++) {
+          fill_solid(leds, NUM_LEDS, CRGB::Black);
+
+          // Draw 2 pairs of 3 LEDs equally spaced (Positions 0,1,2 and 12,13,14)
+          for (int i = 0; i < 3; i++) {
+            leds[i] = CRGB::Red;
+            leds[i + 12] = CRGB::Red;
+          }
+          FastLED.show();
+          delay(150);
+
+          fill_solid(leds, NUM_LEDS, CRGB::Black);
+          FastLED.show();
+          delay(150);
+        }
       }
     }
-
-    motSpeed = 0;  // Standard for all modes: Motor drops to 0 on limit breach
-
-    // --- 3. RECOVERY & APPROACH LOGIC ---
+    motSpeed = 0;  // Ensure power stays cut while limit is breached
   } else if (delta > 0) {
 
-    // PREVENT RECOVERY WHILE SERVING BREAK
-    if (isServingBreak) {
-      motSpeed = 0;
-    } else if (isSmoothMode) {
-      // Proportional Logic
-      float throttle = (float)delta / (float)pLimit;
-      float targetSpeed = maxSpeed * (1.0 - throttle);
-
-      if (motSpeed > targetSpeed) {
-        motSpeed -= (motIncrement * 15);
-        if (motSpeed < targetSpeed) motSpeed = targetSpeed;
-      } else if (motSpeed < targetSpeed && motSpeed < maxSpeed) {
-        motSpeed += motIncrement;
-      }
-    } else {
-      // Abrupt Logic
-      if (motSpeed < (float)maxSpeed) motSpeed += motIncrement;
+    // --- ANTI-CHEAT RE-ARM LOGIC ---
+    // The user must relax the pressure to less than 25% of the limit to re-arm the edge detector.
+    // Small muscle tremors near the limit will no longer bypass the system.
+    if (delta < (pLimit / 4)) {
+      wasOverLimit = false;
     }
 
-    // --- 4. FULLY RELAXED LOGIC ---
+    float throttle = (float)delta / (float)pLimit;
+    float targetSpeed = maxSpeed * (1.0 - throttle);
+
+    if (motSpeed > targetSpeed) {
+      motSpeed -= (motIncrement * 15);
+      if (motSpeed < targetSpeed) motSpeed = targetSpeed;
+    } else if (motSpeed < targetSpeed && motSpeed < maxSpeed) {
+      motSpeed += motIncrement;
+    }
   } else {
-    // PREVENT RECOVERY WHILE SERVING BREAK
-    if (isServingBreak) {
-      motSpeed = 0;
-    } else {
-      if (motSpeed < (float)maxSpeed) motSpeed += motIncrement;
-    }
+    // delta <= 0 (User is fully relaxed at or below resting average)
+    wasOverLimit = false;
+    if (motSpeed < (float)maxSpeed) motSpeed += motIncrement;
   }
 
-  // --- MOTOR EXECUTION ---
   analogWrite(MOTPIN, motSpeed > MOT_MIN ? (int)motSpeed : 0);
 
-  // --- 5. PROGRESS VISUALIZER RENDERING ---
+  // 3. PROGRESS VISUALIZER RENDERING
+
+  // Background: Real-time pressure
   int presDraw = map(constrain(delta, 0, pLimit), 0, pLimit, 0, NUM_LEDS * 3);
   draw_bars_3(presDraw, CRGB::DarkGreen, CRGB::DarkOrange, CRGB::Red);
 
-  if (isReleaseMode) {
-    int visualProgress = constrain(map(currentEdges, 0, targetEdges, 0, NUM_LEDS - 1), 0, NUM_LEDS - 1);
-    leds[NUM_LEDS - 1] = CRGB::Gold;
-    leds[visualProgress] = CRGB::White;
-    draw_cursor_3(knob, CRGB::Purple, CRGB::MediumVioletRed, CRGB::HotPink);
-  } else {
-    draw_cursor_3(knob, CRGB::Aquamarine, CRGB::Cyan, CRGB::Blue);
-  }
-}
+  // Progress: Map current edges against the BASELINE target to hide the active variance.
+  // Constrain ensures the cursor stops at the Gold LED if the user is forced into "Overtime"
+  int visualProgress = constrain(map(currentEdges, 0, targetEdges, 0, NUM_LEDS - 1), 0, NUM_LEDS - 1);
+  leds[NUM_LEDS - 1] = CRGB::Gold;     // Fixed baseline target at the end of the ring
+  leds[visualProgress] = CRGB::White;  // Advancing progress cursor
 
+  // Foreground: Sensitivity knob position
+  draw_cursor_3(knob, CRGB::Purple, CRGB::MediumVioletRed, CRGB::HotPink);
+}
 
 // ======= Option Menu Rendering Functions =======
 // These modes halt the motor and map the encoder to specific setting ranges
-
-void run_opt_speed() {
-  int knob = encLimitRead(0, NUM_LEDS - 1);
-
-  // Float interpolation for smooth accuracy
-  motSpeed = ((float)knob / (float)(NUM_LEDS - 1)) * (float)MOT_MAX;
-  analogWrite(MOTPIN, motSpeed);
-  maxSpeed = motSpeed;
-
-  // Static display: Lime Green bars up to the White cursor
-  draw_bars_3(knob, CRGB::Lime, CRGB::Lime, CRGB::Lime);
-  draw_cursor(knob, CRGB::White);
-}
-
-void run_opt_rampspd() {
-  int knob = encLimitRead(0, NUM_LEDS - 1);
-  rampTimeS = knob + 1;  // Maps 0-23 to 1-24 seconds
-
-  // --- 1. TIME CYCLE CALCULATION ---
-  // Calculate the total duration of one full ramp in milliseconds
-  unsigned long cycleDurationMS = (unsigned long)rampTimeS * 1000UL;
-
-  // Use modulo to find the exact millisecond position within the current repeating cycle
-  unsigned long currentCyclePosition = millis() % cycleDurationMS;
-
-  // --- 2. PHYSICAL MOTOR DEMONSTRATION ---
-  // Calculate the motor speed proportionally based on the time elapsed in the cycle
-  motSpeed = ((float)currentCyclePosition / (float)cycleDurationMS) * (float)maxSpeed;
-
-  // Output to motor, enforcing the minimum stall threshold
-  analogWrite(MOTPIN, motSpeed > MOT_MIN ? (int)motSpeed : 0);
-
-  // --- 3. SYNCHRONIZED VISUAL DEMONSTRATION ---
-  // Map the exact same cycle time directly to the LED ring to match the physical vibration
-  int rampPos = map(currentCyclePosition, 0, cycleDurationMS, 0, knob);
-
-  draw_bars_3(rampPos, CRGB::Lime, CRGB::Lime, CRGB::Lime);
-  draw_cursor(knob, CRGB::White);
-}
-
-void run_opt_break_time() {
-  int knob = encLimitRead(0, NUM_LEDS - 1);
-  edgeBreakTimeS = knob + 1;  // Maps 0-23 to 1-24 seconds
-
-  analogWrite(MOTPIN, 0);  // Safety cut for the motor
-
-  // Calculate pulsating brightness using FastLED's built-in wave generator
-  // 30 BPM = one full pulse (bright to dim to bright) every 2 seconds.
-  // Brightness oscillates between a minimum of 64 and a maximum of 255.
-  uint8_t throb = beatsin8(30, 64, 255);
-
-  // Create the base Dark Red color and scale its brightness by the throb value
-  CRGB pulseColor = CRGB::DarkRed;
-  pulseColor.nscale8_video(throb);
-
-  // Draw the pulsating bars and a static white cursor to mark the setting
-  draw_bars_3(knob, pulseColor, pulseColor, pulseColor);
-  draw_cursor(knob, CRGB::White);
-}
-
-void run_opt_drop_style() {
-  // Expand limit to require 3 physical clicks
-  int knob = encLimitRead(0, 3);
-
-  // Hysteresis: Only flip the state at the extreme ends of the turn
-  if (knob >= 3) isSmoothMode = true;
-  else if (knob <= 0) isSmoothMode = false;
-
-  analogWrite(MOTPIN, 0);
-
-  fill_solid(leds, NUM_LEDS, CRGB::Black);
-  if (!isSmoothMode) {
-    for (int i = 0; i < 12; i++) leds[i] = CRGB::DarkOrange;
-  } else {
-    for (int i = 12; i < 24; i++) leds[i] = CRGB::Cyan;
-  }
-}
-
-void run_opt_session_goal() {
-  // Expand limit to require 3 physical clicks
-  int knob = encLimitRead(0, 3);
-
-  // Hysteresis: Only flip the state at the extreme ends of the turn
-  if (knob >= 3) isReleaseMode = true;
-  else if (knob <= 0) isReleaseMode = false;
-
-  analogWrite(MOTPIN, 0);
-
-  fill_solid(leds, NUM_LEDS, CRGB::Black);
-  if (!isReleaseMode) {
-    for (int i = 0; i < 12; i++) leds[i] = CRGB::DimGray;
-  } else {
-    for (int i = 12; i < 24; i++) leds[i] = CRGB::Magenta;
-  }
-}
 
 void run_opt_edges() {
   int knob = encLimitRead(0, NUM_LEDS - 1);
@@ -630,37 +511,43 @@ void run_opt_reldur() {
   draw_cursor(knob, CRGB::White);
 }
 
-void run_opt_post_org_break() {
+void run_opt_speed() {
   int knob = encLimitRead(0, NUM_LEDS - 1);
-  postOrgasmBreak = knob;
-  analogWrite(MOTPIN, 0); // Safety cut for the motor
 
-  fill_solid(leds, NUM_LEDS, CRGB::Black);
-  uint8_t throb = beatsin8(15, 20, 100);
+  // Float interpolation for smooth accuracy
+  motSpeed = ((float)knob / (float)(NUM_LEDS - 1)) * (float)MOT_MAX;
+  analogWrite(MOTPIN, motSpeed);
+  maxSpeed = motSpeed;
+
+  // Static display: Lime Green bars up to the White cursor
+  draw_bars_3(knob, CRGB::Lime, CRGB::Lime, CRGB::Lime);
+  draw_cursor(knob, CRGB::White);
+}
+
+void run_opt_rampspd() {
+  int knob = encLimitRead(0, NUM_LEDS - 1);
+  rampTimeS = knob + 1; // Maps 0-23 to 1-24 seconds
+
+  // --- 1. TIME CYCLE CALCULATION ---
+  // Calculate the total duration of one full ramp in milliseconds
+  unsigned long cycleDurationMS = (unsigned long)rampTimeS * 1000UL;
   
-  CRGB pulseColor = CRGB(32, 0, 128);
-  pulseColor.nscale8_video(throb);
+  // Use modulo to find the exact millisecond position within the current repeating cycle
+  unsigned long currentCyclePosition = millis() % cycleDurationMS;
+
+  // --- 2. PHYSICAL MOTOR DEMONSTRATION ---
+  // Calculate the motor speed proportionally based on the time elapsed in the cycle
+  motSpeed = ((float)currentCyclePosition / (float)cycleDurationMS) * (float)maxSpeed;
   
-  if (knob >= NUM_LEDS - 4) {
-    // --- INFINITE BREAK ZONE - RETURN TO MANUAL ---
-    // 1. Draw the pulsating purple zone up to the red boundary
-    for (int i = 0; i < NUM_LEDS - 4; i++) {
-      leds[i] = pulseColor;
-    }
-    // 2. Illuminate all four Red LEDs immediately to signify the infinite break
-    for (int i = NUM_LEDS - 4; i < NUM_LEDS; i++) {
-      leds[i] = CRGB::Red;
-    }
-    // 3. The white cursor is intentionally omitted here to hide it
-  } else {
-    // --- STANDARD TIMED BREAK ZONE ---
-    // 1. Draw the pulsating purple zone up to the current setting
-    for (int i = 0; i <= knob; i++) {
-      leds[i] = pulseColor;
-    }
-    // 2. Draw the static white cursor at the leading edge
-    draw_cursor(knob, CRGB::White);
-  }
+  // Output to motor, enforcing the minimum stall threshold
+  analogWrite(MOTPIN, motSpeed > MOT_MIN ? (int)motSpeed : 0);
+
+  // --- 3. SYNCHRONIZED VISUAL DEMONSTRATION ---
+  // Map the exact same cycle time directly to the LED ring to match the physical vibration
+  int rampPos = map(currentCyclePosition, 0, cycleDurationMS, 0, knob);
+  
+  draw_bars_3(rampPos, CRGB::Lime, CRGB::Lime, CRGB::Lime);
+  draw_cursor(knob, CRGB::White);
 }
 
 void run_opt_beep() {
@@ -707,13 +594,11 @@ void run_state_machine(uint8_t state) {
   switch (state) {
     case MANUAL: run_manual(); break;
     case AUTO: run_auto(); break;
-    case OPT_DROP_STYLE: run_opt_drop_style(); break;
-    case OPT_SESSION_GOAL: run_opt_session_goal(); break;
-    case OPT_BREAK_TIME: run_opt_break_time(); break;
+    case AUTO_SMOOTH: run_auto_smooth(); break;
+    case AUTO_RELEASE: run_auto_release(); break;
     case OPT_EDGES: run_opt_edges(); break;
     case OPT_VARIANCE: run_opt_variance(); break;
     case OPT_RELDUR: run_opt_reldur(); break;
-    case OPT_POST_ORG_BREAK: run_opt_post_org_break(); break;
     case OPT_SPEED: run_opt_speed(); break;
     case OPT_RAMPSPD: run_opt_rampspd(); break;
     case OPT_BEEP: run_opt_beep(); break;
@@ -757,54 +642,43 @@ uint8_t set_state(uint8_t btnState, uint8_t state) {
         motSpeed = 0;
         return AUTO;
       case AUTO:
+        myEnc.write(sensitivity);
+        motSpeed = 0;
+        EEPROM.update(SENSITIVITY_ADDR, sensitivity / 4);
+        return AUTO_SMOOTH;
+      case AUTO_SMOOTH:
+        myEnc.write(sensitivity);
+        motSpeed = 0;
+        EEPROM.update(SENSITIVITY_ADDR, sensitivity / 4);
+        return AUTO_RELEASE;
+      case AUTO_RELEASE:
         myEnc.write(0);
         motSpeed = 0;
         currentEdges = 0;
-        isReleasing = false;
+        isReleasing = false;  // Safely cancel active release if manually exited
         EEPROM.update(SENSITIVITY_ADDR, sensitivity / 4);
         return MANUAL;
 
-      // --- MENU CYCLING & CONDITIONAL BRANCHING ---
+      // --- MENU CYCLING (SPEED SETTINGS) ---
       case OPT_SPEED:
         EEPROM.update(MAX_SPEED_ADDR, maxSpeed);
+        // Pre-set encoder knob. Formula reverses the mapping calculation: ((Value - Min) / Increment) * Pulses
         myEnc.write((rampTimeS - 1) * 4);
         return OPT_RAMPSPD;
-
       case OPT_RAMPSPD:
         EEPROM.update(RAMPSPEED_ADDR, rampTimeS);
-        // Pre-set encoder for Break Time (reverses the 1-24 seconds mapping)
-        myEnc.write((edgeBreakTimeS - 1) * 4);
         motSpeed = 0;
-        analogWrite(MOTPIN, 0);
-        return OPT_BREAK_TIME;
+        analogWrite(MOTPIN, motSpeed);
+        myEnc.write(0);
+        return OPT_PRES;
+      case OPT_BEEP:
+        myEnc.write(0);
+        return OPT_PRES;
+      case OPT_PRES:
+        myEnc.write(map(maxSpeed, 0, 255, 0, 4 * (NUM_LEDS - 1)));
+        return OPT_SPEED;
 
-      case OPT_BREAK_TIME:
-        EEPROM.update(BREAK_TIME_ADDR, edgeBreakTimeS);
-        // Pre-set to 12 pulses (3 clicks) if True, 0 if False
-        myEnc.write(isSmoothMode ? 12 : 0);
-        return OPT_DROP_STYLE;
-
-      case OPT_DROP_STYLE:
-        EEPROM.update(DROP_STYLE_ADDR, isSmoothMode ? 1 : 0);
-        // Pre-set to 12 pulses (3 clicks) if True, 0 if False
-        myEnc.write(isReleaseMode ? 12 : 0);
-        return OPT_SESSION_GOAL;
-
-      case OPT_SESSION_GOAL:
-        EEPROM.update(SESSION_GOAL_ADDR, isReleaseMode ? 1 : 0);
-
-        // CONDITIONAL BRANCH
-        if (isReleaseMode) {
-          // Continue to Release settings if Gamified mode is active
-          myEnc.write((targetEdges - 2) * 2);
-          return OPT_EDGES;
-        } else {
-          // Exit menu entirely if Infinite Denial is selected
-          myEnc.write(previousMode == MANUAL ? 0 : sensitivity);
-          motSpeed = 0;
-          return previousMode;
-        }
-
+      // --- MENU CYCLING (AUTO-RELEASE SETTINGS) ---
       case OPT_EDGES:
         EEPROM.update(TARGET_EDGES_ADDR, targetEdges);
         myEnc.write(edgeVariance * 4);  // Re-map 0-6 variance directly to encoder pulses
@@ -815,10 +689,6 @@ uint8_t set_state(uint8_t btnState, uint8_t state) {
         return OPT_RELDUR;
       case OPT_RELDUR:
         EEPROM.update(RELEASE_DUR_ADDR, releaseDurationS);
-        myEnc.write(postOrgasmBreak * 4);  // Pre-set encoder for the post-orgasm break menu
-        return OPT_POST_ORG_BREAK;
-      case OPT_POST_ORG_BREAK:
-        EEPROM.update(POST_ORG_BREAK_ADDR, postOrgasmBreak);
         // Chain back into standard speed settings
         myEnc.write(map(maxSpeed, 0, 255, 0, 4 * (NUM_LEDS - 1)));
         return OPT_SPEED;
@@ -830,40 +700,26 @@ uint8_t set_state(uint8_t btnState, uint8_t state) {
       // ENTERING MENUS FROM MAIN MODES
       case MANUAL:
       case AUTO:
-        previousMode = state;
+      case AUTO_SMOOTH:
         myEnc.write(map(maxSpeed, 0, 255, 0, 4 * (NUM_LEDS - 1)));
         return OPT_SPEED;
+      case AUTO_RELEASE:
+        myEnc.write((targetEdges - 2) * 2);
+        return OPT_EDGES;
 
       // EXITING MENUS TO MAIN MODE
       case OPT_SPEED:
       case OPT_BEEP:
       case OPT_PRES:
-      case OPT_DROP_STYLE:
-      case OPT_SESSION_GOAL:
-      case OPT_BREAK_TIME:
       case OPT_EDGES:
       case OPT_VARIANCE:
       case OPT_RELDUR:
-      case OPT_POST_ORG_BREAK:
-        // Restore correct encoder position based on return mode
-        if (previousMode == MANUAL) {
-          myEnc.write(0);
-        } else {
-          myEnc.write(sensitivity);
-        }
-        motSpeed = 0;         // Ensure motor drops safely when returning
-        return previousMode;  // Return to saved mode
-
+        myEnc.write(0);
+        return MANUAL;
       case OPT_RAMPSPD:
         EEPROM.update(RAMPSPEED_ADDR, rampTimeS);
-        if (previousMode == MANUAL) {
-          myEnc.write(0);
-        } else {
-          myEnc.write(sensitivity);
-        }
-        motSpeed = 0;
-        analogWrite(MOTPIN, 0);  // Safety cutoff
-        return previousMode;     // Return to saved mode
+        myEnc.write(0);
+        return MANUAL;
     }
   }
   return MANUAL;
