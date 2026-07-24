@@ -5,6 +5,17 @@
 ###################################
 
 ===================================
+  Build 20260724.1
+===================================
+
+- Added a verbose USB serial output for debug purposes, serving various status updates continuously.
+- Modified the release duration setting to make three revolutions for a longer duration and extended POT up to 144 seconds (from 48).
+- Fixed: The Pressure debug menu wasn't reachable.
+- Updated the user manual to reflect the current state.
+
+
+
+===================================
   Build 20260722.4
 ===================================
 General:

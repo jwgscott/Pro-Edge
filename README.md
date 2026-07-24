@@ -2,9 +2,9 @@
 Hardware and software for automatic edge/orgasm detection on Arduino. Built upon night-howler/protogasm.
 
 Protogasm hasn't been updated for a few years now, yet it remains a solid base to build upon with easy-to-use hardware and software.
-The hardware remains largely unchanged, providing a ready-to-print, easy-to-solder PCB designed to be easily mounted on an Arduino UNO R3. (At least that's the hardware I tested it with—it probably works with the R4 etc. as well, though untested and without guarantees).
 
-The new Pro-Edge software should™ be install and go on any Arduino UNO R3 based Protogasm hardware.
+Pro-Edge for Arduino is pretty much feature-complete - the hardware limits are reached quite easily. Please report any bugs or errors you encounter via GitHubs "Issues" feature (including info on how to reproduce, when encountered etc.). Also, please use the "Issues" feature to share ideas for changes or features. I'll try to work on them when I have time.
+
 
 ## Features
 Pro-Edge takes all the features from Protogasm and extends them (while fixing a few bugs...).
@@ -39,8 +39,16 @@ When in release mode, the device runs an anti-cheat logic, preventing the user f
 ### Bugfixes (some)
 * Fixed timer clock speed issue: The issue where the vibrator only operated at full speed when set to the maximum speed setting has been fixed.
 * Fixed standby behavior: Resolved an issue where the device failed to properly enter standby mode or restarted upon a very long button press.
-* Some more unmentioned ones by now. See changelogs for details.
+* Some more unmentioned ones by now. See changelog in /documents for details.
 
+## Hardware
+The hardware remains largely unchanged, with this repo providing a ready-to-print, easy-to-solder PCB designed to be easily mounted on an Arduino UNO R3 like a normal plug-and-play Arduino shield.
+
+I still need to compile an updated BOM for the shield but it is almost completely in line with the original Protogasm hardware, so...
+
+The new Pro-Edge software should™ be install and go on any Arduino UNO R3 based Protogasm hardware. At least that's the hardware I tested it with. It probably works with the R4 etc. as well, though untested and without guarantees.
+
+I have created a modified case for the Protogasm a few years ago - it works for me at the moment but requires some changes before I feel good about publishing it here. Maybe that'll happen in the future.
 
 ## License
 This work is licensed under a Creative Commons Attribution-NonCommercial 4.0 International Licence, available at http://creativecommons.org/licenses/by-nc/4.0/.

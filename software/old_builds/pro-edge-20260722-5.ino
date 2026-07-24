@@ -1,4 +1,4 @@
-// Pro-Edge build 20260724.1
+// Pro-Edge build 20260722.5
 /**
  * =======================================================================================
  * PRO-EDGE VIBRATOR CONTROLLER & EDGING SYSTEM
@@ -634,14 +634,11 @@ void run_opt_variance() {
 }
 
 void run_opt_reldur() {
-  int knob = encLimitRead(0, (NUM_LEDS * 3) - 1);
-  releaseDurationS = (knob * 2) + 2;
+  int knob = encLimitRead(0, NUM_LEDS - 1);
+  releaseDurationS = (knob * 2) + 2;  // Maps 0-23 to 2-48 seconds in increments of 2
   analogWrite(MOTPIN, 0);
   draw_bars_3(knob, CRGB::Gold, CRGB::Gold, CRGB::Gold);
-  int rev = knob / NUM_LEDS;
-  for (int i = 0; i <= rev; i++) {
-    draw_cursor_3(knob - i, CRGB::White, CRGB::White, CRGB::White);
-  }
+  draw_cursor(knob, CRGB::White);
 }
 
 void run_opt_post_org_break() {
@@ -756,7 +753,7 @@ uint8_t set_state(uint8_t btnState, uint8_t state) {
     // Halt microcontroller execution indefinitely until button is clicked
     while (digitalRead(ENC_SW) == ENC_SW_UP) delay(1);    // Wait for wake press
     while (digitalRead(ENC_SW) == ENC_SW_DOWN) delay(1);  // Wait for button release (Debounce)
-    beep_motor(1047, 1396, 2093);                         // Ascending wake tone
+    beep_motor(1047, 1396, 2093);  // Ascending wake tone
 
     // Forces motor speed and encoder value to 0 to prevent unwanted activation of the vibrator after leaving standby.
     motSpeed = 0;
@@ -811,13 +808,14 @@ uint8_t set_state(uint8_t btnState, uint8_t state) {
 
         // CONDITIONAL BRANCH
         if (isReleaseMode) {
-          // Continue to Release settings if Release mode is active
+          // Continue to Release settings if Gamified mode is active
           myEnc.write((targetEdges - 2) * 2);
           return OPT_EDGES;
         } else {
-          // If Denial mode is active, route to the diagnostic menu, skipping the release mode settings
-          myEnc.write(0);  // opt_pres doesn't use the encoder, so reset to 0
-          return OPT_PRES;
+          // Exit menu entirely if Infinite Denial is selected
+          myEnc.write(previousMode == MANUAL ? 0 : sensitivity);
+          motSpeed = 0;
+          return previousMode;
         }
 
       case OPT_EDGES:
@@ -834,12 +832,7 @@ uint8_t set_state(uint8_t btnState, uint8_t state) {
         return OPT_POST_ORG_BREAK;
       case OPT_POST_ORG_BREAK:
         EEPROM.update(POST_ORG_BREAK_ADDR, postOrgasmBreak);
-        // Chain into the diagnostic menu instead of the speed menu
-        myEnc.write(0);
-        return OPT_PRES;
-      case OPT_PRES:
-        // Diagnostic menu has no EEPROM state to save.
-        // Chain back into standard speed settings and pre-set the encoder
+        // Chain back into standard speed settings
         myEnc.write(map(maxSpeed, 0, 255, 0, 4 * (NUM_LEDS - 1)));
         return OPT_SPEED;
     }
@@ -956,7 +949,7 @@ void loop() {
       Serial.print(" | Vibrator: ");
       Serial.print((int)motSpeed);
       Serial.print("/");
-      Serial.print(maxSpeed);  // The user defined max speed, not the absolute max.
+      Serial.print(maxSpeed); // The user defined max speed, not the absolute max.
 
       // 4. Print Edging Progress (Only if applicable)
       if (currentState == AUTO && isReleaseMode) {
