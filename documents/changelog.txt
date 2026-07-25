@@ -5,6 +5,13 @@
 ###################################
 
 ===================================
+  Build 20260725.1
+===================================
+
+- Fixed a bug in denial mode preventing the configured post-edge break time from being used. (Thanks to jabiim for noticing.)
+
+
+===================================
   Build 20260724.1
 ===================================
 

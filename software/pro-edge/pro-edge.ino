@@ -333,18 +333,18 @@ void run_auto() {
   static unsigned long relaxStartTime = 0;
   static bool isRelaxing = false;
 
-  // Track if the user has maintained pressure below 25% continuously for a bit before allowing edges to be counted again (allow the edge to subside)
-  if (isReleaseMode) {
-    if (delta < (pLimit / 4)) {
-      if (!isRelaxing) {
-        isRelaxing = true;
-        relaxStartTime = millis();  // Start the 2-second timer
-      } else if (millis() - relaxStartTime >= 2000UL) {
-        wasOverLimit = false;  // Unlock the edge detector after 2 continuous seconds
-      }
-    } else {
-      isRelaxing = false;  // Reset the timer immediately if pressure spikes above 25%
+  // Track if the user has maintained pressure below 25% continuously for a bit before allowing edges to be counted again (allow the edge to subside).
+  // This runs in both modes: it is what re-arms wasOverLimit, and Denial mode needs
+  // that too or its Break Time only ever triggers on the first edge of a session.
+  if (delta < (pLimit / 4)) {
+    if (!isRelaxing) {
+      isRelaxing = true;
+      relaxStartTime = millis();  // Start the 2-second timer
+    } else if (millis() - relaxStartTime >= 2000UL) {
+      wasOverLimit = false;  // Unlock the edge detector after 2 continuous seconds
     }
+  } else {
+    isRelaxing = false;  // Reset the timer immediately if pressure spikes above 25%
   }
 
   // --- 1. ACTIVE RELEASE PHASE LOGIC ---
